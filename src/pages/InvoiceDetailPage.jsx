@@ -16,7 +16,16 @@ export function InvoiceDetailPage() {
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [reminderError, setReminderError] = useState(null);
 
-  useEffect(() => {
+  // Payment Recording State
+  const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('NEFT');
+  const [paymentRef, setPaymentRef] = useState('');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState(null);
+
+  const fetchInvoice = () => {
     setLoading(true);
     api.getInvoice(id)
       .then(data => {
@@ -28,6 +37,10 @@ export function InvoiceDetailPage() {
         setError(err.message || 'Invoice not found');
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    fetchInvoice();
   }, [id]);
 
   const handleAction = async (actionName) => {
@@ -73,12 +86,42 @@ export function InvoiceDetailPage() {
     }
   };
 
+  const handleRecordPayment = async (e) => {
+    e.preventDefault();
+    if (isSubmittingPayment || !invoice) return;
+    setIsSubmittingPayment(true);
+    setPaymentError(null);
+
+    try {
+      await api.createPayment({
+        invoiceId: invoice.rawId || invoice.id,
+        amount: Number(paymentAmount || invoice.outstandingAmount),
+        paymentDate,
+        paymentMethod,
+        reference: paymentRef,
+      });
+
+      setIsRecordPaymentOpen(false);
+      setToastMsg('Payment recorded successfully.');
+      setTimeout(() => setToastMsg(null), 4000);
+
+      // Refresh invoice data
+      const updated = await api.getInvoice(id);
+      setInvoice(updated);
+    } catch (err) {
+      console.error('Record payment error:', err);
+      setPaymentError(err.message || 'Failed to record payment');
+    } finally {
+      setIsSubmittingPayment(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="w-full max-w-container-max mx-auto px-edge-margin py-16 flex items-center justify-center">
         <div className="flex items-center gap-3 text-sm text-gray-500 font-mono">
           <span className="material-symbols-outlined animate-spin text-brand-gold">progress_activity</span>
-          Loading Invoice Intelligence...
+          Loading Invoice Dossier #{id}...
         </div>
       </div>
     );
@@ -88,14 +131,14 @@ export function InvoiceDetailPage() {
     return (
       <main className="w-full max-w-container-max mx-auto px-edge-margin py-16 text-center">
         <div className="bg-white border border-[#E0DED7] rounded p-8 max-w-md mx-auto shadow-subtle">
-          <span className="material-symbols-outlined text-4xl text-error mb-3">error_outline</span>
-          <h2 className="text-lg font-bold text-[#1B1C19] mb-2">Invoice Not Found</h2>
-          <p className="text-xs text-gray-500 font-sans mb-6">
-            {error || `Unable to locate invoice ${id} in your ledger.`}
+          <span className="material-symbols-outlined text-4xl text-gray-400 mb-2">error</span>
+          <h2 className="text-base font-bold text-[#1B1C19] mb-1">Invoice Record Unavailable</h2>
+          <p className="text-xs text-gray-500 mb-6 font-sans">
+            {error || `Unable to locate invoice #${id} in the database.`}
           </p>
           <Link
             to="/receivables"
-            className="px-4 py-2 bg-[#151D1C] text-white rounded text-xs font-semibold inline-flex items-center gap-1.5"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#151D1C] text-white rounded text-xs font-bold hover:bg-[#253231]"
           >
             <span className="material-symbols-outlined text-sm">arrow_back</span>
             Return to Receivables
@@ -131,7 +174,23 @@ export function InvoiceDetailPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {invoice.status !== 'Paid' && (
+            <button 
+              onClick={() => {
+                setPaymentAmount(invoice.outstandingAmount || invoice.numericAmount);
+                setPaymentDate(new Date().toISOString().slice(0, 10));
+                setPaymentRef('');
+                setPaymentError(null);
+                setIsRecordPaymentOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 border border-emerald-600/40 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded text-xs font-semibold transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px] text-emerald-700">payments</span>
+              Record Payment
+            </button>
+          )}
+
           <button 
             onClick={() => handleAction('Downloaded PDF copy')}
             className="flex items-center gap-1.5 px-3.5 py-2 border border-[#E0DED7] rounded text-xs font-semibold text-[#1B1C19] bg-white hover:bg-[#F5F3EE] transition-colors"
@@ -140,16 +199,18 @@ export function InvoiceDetailPage() {
             Download PDF
           </button>
           
-          <button 
-            onClick={() => {
-              setIsReminderOpen(true);
-              setReminderError(null);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#151D1C] text-white rounded text-xs font-semibold hover:bg-[#253231] transition-colors shadow-sm"
-          >
-            <span className="material-symbols-outlined text-[16px] text-brand-gold">send</span>
-            Send Reminder
-          </button>
+          {invoice.status !== 'Paid' && (
+            <button 
+              onClick={() => {
+                setIsReminderOpen(true);
+                setReminderError(null);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#151D1C] text-white rounded text-xs font-semibold hover:bg-[#253231] transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[16px] text-brand-gold">send</span>
+              Send Reminder
+            </button>
+          )}
         </div>
       </div>
 
@@ -174,7 +235,7 @@ export function InvoiceDetailPage() {
             Payment Status & Delay
           </span>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-mono text-2xl font-bold text-error">
+            <span className={`font-mono text-2xl font-bold ${invoice.status === 'Paid' ? 'text-emerald-700' : 'text-error'}`}>
               {invoice.delayText}
             </span>
           </div>
@@ -189,7 +250,7 @@ export function InvoiceDetailPage() {
             Risk Assessment
           </span>
           <div className="flex items-center gap-3 mb-1">
-            <span className="font-mono text-3xl font-bold text-error">
+            <span className={`font-mono text-3xl font-bold ${invoice.status === 'Paid' ? 'text-emerald-700' : 'text-error'}`}>
               {invoice.riskScore}/100
             </span>
             <RiskBadge risk={invoice.risk} />
@@ -214,7 +275,9 @@ export function InvoiceDetailPage() {
               {invoice.riskExplanation || (
                 <>
                   <span className="font-bold text-[#1B1C19]">{invoice.customer}</span> currently holds an outstanding balance of <span className="font-mono font-semibold">{invoice.outstanding}</span>. 
-                  This overdue balance represents a critical working capital concentration and threatens projected cash runway.
+                  {invoice.status === 'Paid' 
+                    ? ' This invoice is settled in full with zero active risk.'
+                    : ' This overdue balance represents working capital concentration and affects projected cash runway.'}
                 </>
               )}
             </p>
@@ -231,76 +294,28 @@ export function InvoiceDetailPage() {
             ) : (
               <div className="p-3.5 bg-[#FBF9F4] border border-[#E0DED7] rounded text-xs space-y-1.5">
                 <div className="flex items-center gap-2 text-gray-600">
-                  <span className="material-symbols-outlined text-sm text-error">warning</span>
-                  <span>Invoice delay ({invoice.daysOverdue || 0} days) exceeds typical credit terms.</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="material-symbols-outlined text-sm text-amber-600">trending_down</span>
-                  <span>Customer payment reliability score reflects increased risk of continued delinquency.</span>
+                  <span className="material-symbols-outlined text-sm text-emerald-600">check_circle</span>
+                  <span>Invoice tracking is active and grounded in verified ledger records.</span>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Payment Delay History Comparison */}
+          {/* Payment History & Ledger */}
           <div className="bg-white border border-[#E0DED7] rounded p-6 shadow-subtle">
-            <h3 className="text-sm font-bold text-[#1B1C19] mb-4">Payment Behavior & Delay Multiples</h3>
+            <h3 className="text-sm font-bold text-[#1B1C19] mb-4">Payment History & Ledger</h3>
             <div className="space-y-4 text-xs font-sans">
-              <div>
-                <div className="flex justify-between text-gray-600 mb-1">
-                  <span>Current Invoice Overdue Duration</span>
-                  <span className="font-mono font-bold text-error">{invoice.daysOverdue || 0} Days</span>
-                </div>
-                <div className="w-full bg-[#E0DED7] h-2.5 rounded-full overflow-hidden">
-                  <div 
-                    className="bg-error h-full rounded-full transition-all"
-                    style={{ width: `${Math.min(100, Math.max(10, ((invoice.daysOverdue || 0) / 90) * 100))}%` }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-gray-600 mb-1">
-                  <span>Customer Historical Average Delay</span>
-                  <span className="font-mono font-semibold text-gray-700">{invoice.averageDelay || 14} Days</span>
-                </div>
-                <div className="w-full bg-[#E0DED7] h-2.5 rounded-full overflow-hidden">
-                  <div 
-                    className="bg-gray-500 h-full rounded-full transition-all"
-                    style={{ width: `${Math.min(100, ((invoice.averageDelay || 14) / 90) * 100)}%` }}
-                  />
-                </div>
-              </div>
-
-              <p className="text-[11px] text-gray-500 pt-2 border-t border-[#E0DED7]">
-                Customer is currently delaying payment at <span className="font-bold text-[#1B1C19]">{((invoice.daysOverdue || 0) / Math.max(1, invoice.averageDelay || 14)).toFixed(1)}x</span> their historical baseline.
-              </p>
-            </div>
-          </div>
-
-          {/* Action Log / Audit Trail */}
-          <div className="bg-white border border-[#E0DED7] rounded p-6 shadow-subtle">
-            <h3 className="text-sm font-bold text-[#1B1C19] mb-4">Action History & Timeline</h3>
-            <div className="space-y-3 font-sans text-xs">
-              {actionHistory.length > 0 && actionHistory.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-2.5 bg-amber-50/50 border border-amber-200/60 rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-sm text-brand-gold">check_circle</span>
-                    <span className="font-semibold text-brand-dark">{item.action}</span>
+              <div className="divide-y divide-[#E0DED7]">
+                {invoice.history && invoice.history.map((hist, i) => (
+                  <div key={i} className="py-2.5 flex justify-between items-center">
+                    <div>
+                      <div className="font-semibold text-[#1B1C19]">{hist.text}</div>
+                      <div className="text-gray-400 font-mono text-[11px]">{hist.date}</div>
+                    </div>
+                    <span className="font-mono font-bold text-gray-700">{hist.amount}</span>
                   </div>
-                  <span className="font-mono text-gray-400 text-[10px]">{item.time}</span>
-                </div>
-              ))}
-
-              {invoice.history && invoice.history.map((hist) => (
-                <div key={hist.id} className="flex items-center justify-between p-2.5 bg-[#FBF9F4] border border-[#E0DED7] rounded">
-                  <div>
-                    <div className="font-semibold text-gray-800">{hist.text}</div>
-                    <div className="text-[10px] text-gray-400 font-mono">{hist.date}</div>
-                  </div>
-                  <span className="font-mono font-bold text-gray-700">{hist.amount}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -314,64 +329,68 @@ export function InvoiceDetailPage() {
             </span>
             <h3 className="text-sm font-bold text-[#1B1C19] mb-3">Next Best Action</h3>
             <p className="text-xs text-gray-600 font-sans mb-4">
-              Based on credit risk and payment delay multiple, execute the following structured recovery workflow:
+              {invoice.status === 'Paid' 
+                ? 'Invoice is settled in full. No collection actions required.'
+                : 'Based on credit risk and payment delay, execute the following recovery workflow:'}
             </p>
 
-            <div className="space-y-2.5">
-              <button
-                onClick={() => {
-                  setIsReminderOpen(true);
-                  setReminderError(null);
-                }}
-                className="w-full text-left p-3 border border-[#E0DED7] hover:border-brand-gold hover:bg-[#FBF9F4] rounded transition-all group"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-[#1B1C19] group-hover:text-brand-dark">
-                    1. Send Payment Reminder
-                  </span>
-                  <span className="material-symbols-outlined text-sm text-gray-400 group-hover:text-brand-dark">
-                    send
-                  </span>
-                </div>
-                <p className="text-[11px] text-gray-500">
-                  Deliver formal email statement with RTGS / NEFT bank instructions.
-                </p>
-              </button>
+            {invoice.status !== 'Paid' && (
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => {
+                    setIsReminderOpen(true);
+                    setReminderError(null);
+                  }}
+                  className="w-full text-left p-3 border border-[#E0DED7] hover:border-brand-gold hover:bg-[#FBF9F4] rounded transition-all group"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-[#1B1C19] group-hover:text-brand-dark">
+                      1. Send Payment Reminder
+                    </span>
+                    <span className="material-symbols-outlined text-sm text-gray-400 group-hover:text-brand-dark">
+                      send
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Deliver formal email statement with RTGS / NEFT bank instructions.
+                  </p>
+                </button>
 
-              <button
-                onClick={() => handleAction('Offered 2% Instant Settlement Discount')}
-                className="w-full text-left p-3 border border-[#E0DED7] hover:border-brand-gold hover:bg-[#FBF9F4] rounded transition-all group"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-[#1B1C19] group-hover:text-brand-dark">
-                    2. Offer 2% Early Settlement
-                  </span>
-                  <span className="material-symbols-outlined text-sm text-gray-400 group-hover:text-brand-dark">
-                    percent
-                  </span>
-                </div>
-                <p className="text-[11px] text-gray-500">
-                  Recover immediate cash flow by offering spot settlement incentive.
-                </p>
-              </button>
+                <button
+                  onClick={() => handleAction('Offered 2% Instant Settlement Discount')}
+                  className="w-full text-left p-3 border border-[#E0DED7] hover:border-brand-gold hover:bg-[#FBF9F4] rounded transition-all group"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-[#1B1C19] group-hover:text-brand-dark">
+                      2. Offer 2% Early Settlement
+                    </span>
+                    <span className="material-symbols-outlined text-sm text-gray-400 group-hover:text-brand-dark">
+                      percent
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Recover immediate cash flow by offering spot settlement incentive.
+                  </p>
+                </button>
 
-              <button
-                onClick={() => handleAction('Marked as Disputed')}
-                className="w-full text-left p-3 border border-[#E0DED7] hover:border-red-400 hover:bg-red-50/30 rounded transition-all group"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-error">
-                    3. Flag Billing Dispute
-                  </span>
-                  <span className="material-symbols-outlined text-sm text-error">
-                    report_problem
-                  </span>
-                </div>
-                <p className="text-[11px] text-gray-500">
-                  Pause automated collection and open internal reconciliation ticket.
-                </p>
-              </button>
-            </div>
+                <button
+                  onClick={() => handleAction('Marked as Disputed')}
+                  className="w-full text-left p-3 border border-[#E0DED7] hover:border-red-400 hover:bg-red-50/30 rounded transition-all group"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-error">
+                      3. Flag Billing Dispute
+                    </span>
+                    <span className="material-symbols-outlined text-sm text-error">
+                      report_problem
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Pause automated collection and open internal reconciliation ticket.
+                  </p>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Invoice Summary Card */}
@@ -397,6 +416,105 @@ export function InvoiceDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Record Payment Modal */}
+      {isRecordPaymentOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px] p-4">
+          <div className="w-full max-w-md bg-white border border-[#E0DED7] rounded shadow-xl p-6 animate-in fade-in">
+            <h3 className="text-base font-bold text-[#1B1C19] mb-1">Record Payment Received</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Apply payment for Invoice <span className="font-mono font-bold text-gray-700">{invoice.id}</span> ({invoice.customer}):
+            </p>
+
+            {paymentError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-center gap-2">
+                <span className="material-symbols-outlined text-base">error</span>
+                <span>{paymentError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleRecordPayment} className="space-y-4 text-xs font-sans">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">Amount Received (₹) *</label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  max={invoice.numericAmount}
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="w-full p-2 border border-[#E0DED7] rounded font-mono font-bold text-sm outline-none focus:border-[#151D1C]"
+                />
+                <span className="text-[11px] text-gray-400 mt-0.5 block">
+                  Outstanding: {invoice.outstanding}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Payment Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    className="w-full p-2 border border-[#E0DED7] rounded font-mono outline-none focus:border-[#151D1C]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-gray-700 mb-1">Payment Method</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full p-2 border border-[#E0DED7] rounded font-sans outline-none focus:border-[#151D1C]"
+                  >
+                    <option value="NEFT">NEFT Transfer</option>
+                    <option value="RTGS">RTGS Transfer</option>
+                    <option value="UPI">UPI Payment</option>
+                    <option value="Cheque">Cheque Deposit</option>
+                    <option value="Bank Transfer">Direct Bank Transfer</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">Reference / UTR Number</label>
+                <input
+                  type="text"
+                  placeholder="e.g. UTR-982348123"
+                  value={paymentRef}
+                  onChange={(e) => setPaymentRef(e.target.value)}
+                  className="w-full p-2 border border-[#E0DED7] rounded font-mono outline-none focus:border-[#151D1C]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-[#E0DED7]">
+                <button
+                  type="button"
+                  onClick={() => setIsRecordPaymentOpen(false)}
+                  disabled={isSubmittingPayment}
+                  className="px-4 py-2 border border-[#E0DED7] rounded text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingPayment}
+                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded flex items-center gap-1.5 disabled:opacity-50 transition-colors"
+                >
+                  {isSubmittingPayment ? (
+                    <span className="material-symbols-outlined text-sm animate-spin text-white">progress_activity</span>
+                  ) : (
+                    <span className="material-symbols-outlined text-sm">check</span>
+                  )}
+                  {isSubmittingPayment ? 'Saving...' : 'Confirm Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Quick Reminder Modal */}
       {isReminderOpen && (

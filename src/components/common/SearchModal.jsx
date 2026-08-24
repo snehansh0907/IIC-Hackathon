@@ -33,10 +33,11 @@ export function SearchModal({ isOpen, onClose }) {
 
   const q = query.toLowerCase();
 
-  const filteredInvoices = invoices.filter(inv => 
-    (inv.id && inv.id.toLowerCase().includes(q)) || 
-    (inv.customer && inv.customer.toLowerCase().includes(q))
-  ).slice(0, 4);
+  const filteredInvoices = invoices.filter((inv) => {
+    const invNum = (inv.invoice_number || inv.id || '').toLowerCase();
+    const custName = (inv.customer_name || inv.customer?.name || (typeof inv.customer === 'string' ? inv.customer : '') || '').toLowerCase();
+    return invNum.includes(q) || custName.includes(q);
+  }).slice(0, 4);
 
   const filteredCustomers = customers.filter(c =>
     (c.name && c.name.toLowerCase().includes(q)) ||
@@ -69,7 +70,7 @@ export function SearchModal({ isOpen, onClose }) {
         <div className="max-h-80 overflow-y-auto p-2">
           {query.trim() === '' && (
             <div className="px-3 py-2 text-xs text-gray-400 font-sans">
-              Quick suggestions: Type an invoice number (e.g. <span className="font-mono text-gray-600">INV-ABC-1001</span>) or customer name (e.g. <span className="font-mono text-gray-600">ABC Construction</span>).
+              Quick suggestions: Type an invoice number (e.g. <span className="font-mono text-gray-600">INV-1001</span>) or customer name (e.g. <span className="font-mono text-gray-600">ABC Construction</span>).
             </div>
           )}
 
@@ -78,26 +79,37 @@ export function SearchModal({ isOpen, onClose }) {
               <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
                 Invoices
               </div>
-              {filteredInvoices.map((inv) => (
-                <div
-                  key={inv.id}
-                  onClick={() => {
-                    navigate(`/invoice/${inv.id}`);
-                    onClose();
-                  }}
-                  className="flex items-center justify-between px-3 py-2 hover:bg-[#F5F3EE] rounded cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-sm text-gray-400">receipt_long</span>
-                    <span className="font-mono text-xs font-semibold text-[#1B1C19]">{inv.id}</span>
-                    <span className="text-xs text-gray-600">— {inv.customer}</span>
+              {filteredInvoices.map((inv) => {
+                const invDisplayId = inv.invoice_number || inv.id;
+                const custDisplayName = inv.customer_name || inv.customer?.name || (typeof inv.customer === 'string' ? inv.customer : 'Customer');
+                const amtDisplay = inv.amountFormatted || (typeof inv.amount === 'number' ? `₹${inv.amount.toLocaleString('en-IN')}` : inv.amount);
+                const delayText = inv.delayText || (inv.days_overdue > 0 ? `${inv.days_overdue}d overdue` : 'On track');
+
+                return (
+                  <div
+                    key={inv.id}
+                    onClick={() => {
+                      navigate(`/invoice/${inv.id}`);
+                      onClose();
+                    }}
+                    className="flex items-center justify-between px-3 py-2 hover:bg-[#F5F3EE] rounded cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm text-gray-400">receipt_long</span>
+                      <span className="font-mono text-xs font-semibold text-[#1B1C19]">{invDisplayId}</span>
+                      <span className="text-xs text-gray-600">— {custDisplayName}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-medium text-[#1B1C19]">{amtDisplay}</span>
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded font-mono ${
+                        inv.days_overdue > 0 ? 'text-red-700 bg-red-50' : 'text-emerald-700 bg-emerald-50'
+                      }`}>
+                        {delayText}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-medium text-[#1B1C19]">{inv.amount}</span>
-                    <span className="text-[11px] text-red-700 bg-red-50 px-1.5 py-0.5 rounded font-mono">{inv.delayText}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

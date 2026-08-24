@@ -404,6 +404,28 @@ export const api = {
     }
   },
 
+  // 5b. Record Payment
+  async createPayment({ invoiceId, amount, paymentDate, paymentMethod = 'NEFT', reference = '' }) {
+    try {
+      const res = await authFetch('/api/payments', {
+        method: 'POST',
+        body: JSON.stringify({
+          invoice_id: invoiceId,
+          amount: Number(amount),
+          payment_date: paymentDate || new Date().toISOString().slice(0, 10),
+          payment_method: paymentMethod,
+          reference: reference || null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'Failed to record payment');
+      return json.data;
+    } catch (err) {
+      console.error('api.createPayment error:', err);
+      throw err;
+    }
+  },
+
   // 6. Customers List
   async getCustomers(query = '') {
     try {

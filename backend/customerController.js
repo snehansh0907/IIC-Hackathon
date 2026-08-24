@@ -193,6 +193,11 @@ async function createCustomer(req, res) {
 async function updateCustomer(req, res) {
   try {
     const { id } = req.params;
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No business found.' });
+    }
+
     const { name, email, phone, average_payment_days, payment_reliability } = req.body;
 
     const { data, error } = await supabase
@@ -205,6 +210,7 @@ async function updateCustomer(req, res) {
         ...(payment_reliability !== undefined && { payment_reliability }),
       })
       .eq('id', id)
+      .eq('business_id', business.id)
       .select()
       .maybeSingle();
 
@@ -223,7 +229,17 @@ async function updateCustomer(req, res) {
 async function deleteCustomer(req, res) {
   try {
     const { id } = req.params;
-    const { error } = await supabase.from('customers').delete().eq('id', id);
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No business found.' });
+    }
+
+    const { error } = await supabase
+      .from('customers')
+      .delete()
+      .eq('id', id)
+      .eq('business_id', business.id);
+
     if (error) throw error;
     res.json({ success: true, data: { id } });
   } catch (error) {

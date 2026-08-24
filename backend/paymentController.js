@@ -32,11 +32,13 @@ async function createPayment(req, res) {
       return res.status(400).json({ success: false, error: 'invoice_id and amount are required' });
     }
 
-    const { data: invoice, error: invoiceError } = await supabase
-      .from('invoices')
-      .select('*')
-      .eq('id', invoice_id)
-      .maybeSingle();
+    const business = req.business;
+    let invQuery = supabase.from('invoices').select('*').eq('id', invoice_id);
+    if (business) {
+      invQuery = invQuery.eq('business_id', business.id);
+    }
+
+    const { data: invoice, error: invoiceError } = await invQuery.maybeSingle();
 
     if (invoiceError) throw invoiceError;
     if (!invoice) {

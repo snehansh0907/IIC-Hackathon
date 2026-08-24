@@ -64,6 +64,11 @@ async function createExpense(req, res) {
 async function updateExpense(req, res) {
   try {
     const { id } = req.params;
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No business found.' });
+    }
+
     const { category, description, amount, due_date, recurring, status } = req.body;
 
     const { data, error } = await supabase
@@ -77,6 +82,7 @@ async function updateExpense(req, res) {
         ...(status !== undefined && { status }),
       })
       .eq('id', id)
+      .eq('business_id', business.id)
       .select()
       .maybeSingle();
 
@@ -95,7 +101,17 @@ async function updateExpense(req, res) {
 async function deleteExpense(req, res) {
   try {
     const { id } = req.params;
-    const { error } = await supabase.from('expenses').delete().eq('id', id);
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No business found.' });
+    }
+
+    const { error } = await supabase
+      .from('expenses')
+      .delete()
+      .eq('id', id)
+      .eq('business_id', business.id);
+
     if (error) throw error;
     res.json({ success: true, data: { id } });
   } catch (error) {

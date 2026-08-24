@@ -20,16 +20,22 @@ function enrichInvoice(invoice, payments = [], customer = null) {
 }
 
 async function fetchEnrichedInvoices(businessId, filterFn = null) {
-  const [{ data: invoices, error: invoicesError }, { data: payments, error: paymentsError }, { data: customers, error: customersError }] =
+  const [{ data: invoices, error: invoicesError }, { data: customers, error: customersError }] =
     await Promise.all([
       supabase.from('invoices').select('*').eq('business_id', businessId).order('due_date', { ascending: false }),
-      supabase.from('payments').select('*'),
       supabase.from('customers').select('*').eq('business_id', businessId),
     ]);
 
   if (invoicesError) throw invoicesError;
-  if (paymentsError) throw paymentsError;
   if (customersError) throw customersError;
+
+  const invoiceIds = (invoices || []).map((inv) => inv.id);
+  const { data: payments, error: paymentsError } = await supabase
+    .from('payments')
+    .select('*')
+    .in('invoice_id', invoiceIds.length ? invoiceIds : ['00000000-0000-0000-0000-000000000000']);
+
+  if (paymentsError) throw paymentsError;
 
   const paymentsByInvoiceId = {};
   for (const payment of payments || []) {
@@ -234,6 +240,11 @@ async function createInvoice(req, res) {
 async function updateInvoice(req, res) {
   try {
     const { id } = req.params;
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No business found.' });
+    }
+
     const { status, notes, due_date, amount } = req.body;
 
     const { data, error } = await supabase
@@ -245,6 +256,7 @@ async function updateInvoice(req, res) {
         ...(amount !== undefined && { amount }),
       })
       .eq('id', id)
+      .eq('business_id', business.id)
       .select()
       .maybeSingle();
 
@@ -263,7 +275,17 @@ async function updateInvoice(req, res) {
 async function deleteInvoice(req, res) {
   try {
     const { id } = req.params;
-    const { error } = await supabase.from('invoices').delete().eq('id', id);
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No business found.' });
+    }
+
+    const { error } = await supabase
+      .from('invoices')
+      .delete()
+      .eq('id', id)
+      .eq('business_id', business.id);
+
     if (error) throw error;
     res.json({ success: true, data: { id } });
   } catch (error) {
