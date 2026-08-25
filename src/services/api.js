@@ -389,6 +389,24 @@ export const api = {
     }
   },
 
+  // 4b. Bulk Import Invoices
+  async importInvoices({ invoices, source = 'CSV' }) {
+    try {
+      const res = await authFetch('/api/invoices/import', {
+        method: 'POST',
+        body: JSON.stringify({ invoices, source }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Failed to import invoices');
+      }
+      return json.data;
+    } catch (err) {
+      console.error('api.importInvoices error:', err);
+      throw err;
+    }
+  },
+
   // 5. Update Invoice Status
   async updateInvoiceStatus(id, newStatus, note = '') {
     try {

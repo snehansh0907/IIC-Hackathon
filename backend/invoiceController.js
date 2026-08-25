@@ -293,6 +293,254 @@ async function deleteInvoice(req, res) {
   }
 }
 
+// Date & Amount normalizers for file imports
+function parseDateString(dateStr) {
+  if (!dateStr) return null;
+  if (typeof dateStr === 'number') {
+    // Excel serial date: days since 1899-12-30
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + dateStr * 86400000);
+    if (!isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+  }
+
+  const str = String(dateStr).trim();
+  if (!str) return null;
+
+  // 1. Tally format YYYYMMDD (e.g. 20260825)
+  if (/^\d{8}$/.test(str)) {
+    const y = str.slice(0, 4);
+    const m = str.slice(4, 6);
+    const d = str.slice(6, 8);
+    return `${y}-${m}-${d}`;
+  }
+
+  // 2. YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
+  if (/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(str)) {
+    const parts = str.split(/[-/.]/);
+    const y = parts[0];
+    const m = String(parts[1]).padStart(2, '0');
+    const d = String(parts[2]).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 3. DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{4}$/.test(str)) {
+    const parts = str.split(/[-/.]/);
+    const d = String(parts[0]).padStart(2, '0');
+    const m = String(parts[1]).padStart(2, '0');
+    const y = parts[2];
+    return `${y}-${m}-${d}`;
+  }
+
+  // 4. Standard Date.parse
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+function parseAmount(val) {
+  if (typeof val === 'number') return isNaN(val) ? 0 : Math.abs(val);
+  if (!val) return 0;
+  let str = String(val)
+    .replace(/[₹$,\s]/g, '')
+    .replace(/(dr|cr)$/i, '')
+    .trim();
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : Math.abs(num);
+}
+
+function parseStatus(val) {
+  const str = String(val || '').toLowerCase().trim();
+  if (['paid', 'closed', 'settled', 'cleared', 'completed'].includes(str)) {
+    return 'paid';
+  }
+  if (str === 'disputed') {
+    return 'disputed';
+  }
+  return 'pending';
+}
+
+// POST /api/invoices/import
+async function importInvoices(req, res) {
+  try {
+    const business = req.business || await getPrimaryBusiness();
+    if (!business) {
+      return res.status(404).json({ success: false, error: 'No authenticated business found.' });
+    }
+
+    const { invoices, source } = req.body;
+
+    if (!Array.isArray(invoices) || invoices.length === 0) {
+      return res.status(400).json({ success: false, error: 'No invoice records provided for import.' });
+    }
+
+    // 1. Fetch existing customers for this business
+    const { data: existingCustomers, error: custFetchErr } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('business_id', business.id);
+
+    if (custFetchErr) throw custFetchErr;
+
+    const customerMapByName = {};
+    for (const cust of existingCustomers || []) {
+      customerMapByName[cust.name.trim().toLowerCase()] = cust;
+    }
+
+    // 2. Fetch existing invoices for duplicate detection
+    const { data: existingInvoices, error: invFetchErr } = await supabase
+      .from('invoices')
+      .select('id, invoice_number')
+      .eq('business_id', business.id);
+
+    if (invFetchErr) throw invFetchErr;
+
+    const existingInvoiceNumbers = new Set(
+      (existingInvoices || []).map((inv) => String(inv.invoice_number || '').trim().toLowerCase())
+    );
+
+    const imported = [];
+    const skipped = [];
+    const errors = [];
+    let newCustomersCount = 0;
+
+    for (let i = 0; i < invoices.length; i++) {
+      const row = invoices[i];
+      const rowNum = i + 1;
+
+      // Extract & sanitize invoice number
+      const invoiceNumber = String(row.invoice_number || row.invoiceNo || row.voucherNumber || row.billNumber || '').trim();
+      if (!invoiceNumber) {
+        errors.push({ row: rowNum, reason: 'Missing invoice number' });
+        continue;
+      }
+
+      // Check duplicate
+      const invNumKey = invoiceNumber.toLowerCase();
+      if (existingInvoiceNumbers.has(invNumKey)) {
+        skipped.push({
+          row: rowNum,
+          invoiceNumber,
+          customer: row.customer_name || row.customer || 'Unknown',
+          reason: 'Invoice already exists in database',
+        });
+        continue;
+      }
+
+      // Extract & sanitize customer name
+      const customerName = String(row.customer_name || row.customer || row.partyName || row.client || '').trim();
+      if (!customerName) {
+        errors.push({ row: rowNum, invoiceNumber, reason: 'Missing customer/client name' });
+        continue;
+      }
+
+      // Extract & sanitize amount
+      const rawAmt = row.amount !== undefined ? row.amount : (row.total || row.grandTotal || row.netAmount);
+      const amountNum = parseAmount(rawAmt);
+      if (amountNum <= 0) {
+        errors.push({ row: rowNum, invoiceNumber, reason: 'Invalid or non-positive invoice amount' });
+        continue;
+      }
+
+      // Extract & normalize dates
+      const issueDate = parseDateString(row.issue_date || row.invoiceDate || row.date) || new Date().toISOString().slice(0, 10);
+      let dueDate = parseDateString(row.due_date || row.dueDate || row.expiryDate);
+      if (!dueDate) {
+        // Fallback: issue_date + 30 days
+        const d = new Date(issueDate);
+        d.setDate(d.getDate() + 30);
+        dueDate = d.toISOString().slice(0, 10);
+      }
+
+      // Normalize status
+      const normalizedStatus = parseStatus(row.status);
+
+      // Customer Matching / Creation
+      const custKey = customerName.toLowerCase();
+      let customer = customerMapByName[custKey];
+
+      if (!customer) {
+        const { data: newCust, error: createCustErr } = await supabase
+          .from('customers')
+          .insert({
+            business_id: business.id,
+            name: customerName,
+            email: row.customer_email || row.email || null,
+            phone: row.customer_phone || row.phone || null,
+            average_payment_days: 14,
+            payment_reliability: 75,
+          })
+          .select()
+          .single();
+
+        if (createCustErr) {
+          errors.push({ row: rowNum, invoiceNumber, reason: `Failed to create customer record: ${createCustErr.message}` });
+          continue;
+        }
+
+        customer = newCust;
+        customerMapByName[custKey] = newCust;
+        newCustomersCount++;
+      }
+
+      // Insert Invoice
+      const { data: newInvoice, error: createInvErr } = await supabase
+        .from('invoices')
+        .insert({
+          business_id: business.id,
+          customer_id: customer.id,
+          invoice_number: invoiceNumber,
+          amount: amountNum,
+          issue_date: issueDate,
+          due_date: dueDate,
+          status: normalizedStatus,
+          paid_date: normalizedStatus === 'paid' ? (parseDateString(row.paid_date) || issueDate) : null,
+        })
+        .select()
+        .single();
+
+      if (createInvErr) {
+        errors.push({ row: rowNum, invoiceNumber, reason: `Database insertion error: ${createInvErr.message}` });
+        continue;
+      }
+
+      // Track newly inserted invoice number to prevent duplicates within the same batch
+      existingInvoiceNumbers.add(invNumKey);
+
+      imported.push({
+        id: newInvoice.id,
+        invoiceNumber: newInvoice.invoice_number,
+        customer: customer.name,
+        amount: newInvoice.amount,
+        issueDate: newInvoice.issue_date,
+        dueDate: newInvoice.due_date,
+        status: newInvoice.status,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalProcessed: invoices.length,
+        importedCount: imported.length,
+        skippedCount: skipped.length,
+        errorCount: errors.length,
+        newCustomersCount,
+        imported,
+        skipped,
+        errors,
+        source: source || 'File Import',
+      },
+    });
+  } catch (error) {
+    console.error('importInvoices error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+}
+
 module.exports = {
   enrichInvoice,
   fetchEnrichedInvoices,
@@ -303,4 +551,9 @@ module.exports = {
   createInvoice,
   updateInvoice,
   deleteInvoice,
+  importInvoices,
+  parseDateString,
+  parseAmount,
+  parseStatus,
 };
+
