@@ -1,7 +1,13 @@
 // API Service Layer for DuesOS
-// Connects to Express + Supabase backend via VITE_API_URL (e.g. http://localhost:5000)
+// Connects to Express + Supabase backend
+// In production (same-origin Render deployment), BASE_URL is '' (relative)
+// In local dev, connects to VITE_API_URL or http://localhost:5000
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const isProd = import.meta.env.PROD;
+const envUrl = import.meta.env.VITE_API_URL;
+const BASE_URL = (isProd && (!envUrl || envUrl.includes('localhost')))
+  ? ''
+  : (envUrl || (isProd ? '' : 'http://localhost:5000'));
 
 export function formatMoney(val) {
   const num = Number(val || 0);
